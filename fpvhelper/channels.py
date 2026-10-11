@@ -169,7 +169,7 @@ class HidrawSource:
                     name = line.split('=', 1)[1]
             if match and match.lower() in name.lower():
                 return '/dev/' + os.path.basename(p)
-        raise RuntimeError(f'没找到匹配 "{match}" 的 hidraw 设备，用 fpv_monitor.py --list')
+        raise RuntimeError(f'未找到匹配 "{match}" 的 hidraw 设备，可用 fpv_monitor.py --list 查看')
 
     def poll(self, timeout=0.2):
         r, _, _ = select.select([self.fd], [], [], timeout)
@@ -255,6 +255,12 @@ STICK_FUNCS = ('throttle',)
 SWITCH_FUNCS = ('arm', 'mode', 'buzzer', 'turtle')
 ALL_FUNCS = AXIS_FUNCS + STICK_FUNCS + SWITCH_FUNCS
 
+# 功能名的中文标签。键名一律保持英文（mapping.toml 里写的就是这些键），
+# 只有界面与日志显示中文：roll 横滚 / pitch 俯仰 / yaw 偏航 / throttle 油门，
+# arm 解锁 / mode 模式 / buzzer 回平 / turtle 翻正。
+FUNC_CN = {'roll': '横滚', 'pitch': '俯仰', 'yaw': '偏航', 'throttle': '油门',
+           'arm': '解锁', 'mode': '模式', 'buzzer': '回平', 'turtle': '翻正'}
+
 
 class Mapping:
     """通道号 -> 功能 的软映射，外加每路的归一化参数。"""
@@ -296,6 +302,11 @@ class Mapping:
                         val = i
                 if spec.get('invert'):
                     val = len(bands) - 1 - val
+                # 档位序号 -> 值。带语义的多档开关（模式）在这里换成模式号：
+                # map = [0, 1, 2] 表示从最小档到最大档依次是 角度模式 / 半自稳 / 手动模式
+                order = spec.get('map') or []
+                if 0 <= val < len(order):
+                    val = order[val]
             elif kind == 'range':
                 span = (hi - lo) or 1
                 val = (raw - lo) / span
@@ -320,16 +331,19 @@ class Mapping:
         for name in ALL_FUNCS:
             s = self.funcs.get(name)
             if not s or s.get('channel') is None:
-                lines.append(f'  {name:<9} 未映射')
+                lines.append(f'  {FUNC_CN.get(name, name):<4} {name:<9} 未映射')
                 continue
             extra = f"反={'是' if s.get('invert') else '否'}"
             if s.get('kind') == 'switch':
                 extra += ' 开关'
             if s.get('kind') == 'select':
                 extra += f" 档位x{len(s.get('bands') or [0, 0, 0, 0])}"
-            lines.append(f"  {name:<9} ch{s['channel']:<3} {s.get('kind', 'axis'):<7} "
+                if s.get('map'):
+                    extra += ' 顺序' + '/'.join(str(int(m)) for m in s['map'])
+            lines.append(f"  {FUNC_CN.get(name, name):<4} {name:<9} ch{s['channel']:<3} "
+                         f"{s.get('kind', 'axis'):<7} "
                          f"{s.get('min')}..{s.get('max')} {extra}"
-                         f"{'' if s.get('learned', True) else '  (没学过，先跑 fpv_learn.py)'}")
+                         f"{'' if s.get('learned', True) else '  (未标定，请先跑 fpv_learn.py)'}")
         return '\n'.join(lines)
 
 

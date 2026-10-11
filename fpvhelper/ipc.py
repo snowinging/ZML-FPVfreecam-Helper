@@ -7,9 +7,15 @@
 
   状态包 辅助程序 -> 游戏  32 字节  每帧一包（默认 250 Hz）
     magic 'EFPV' / ver / type=1 / seq u16 / t_ms u32
-    roll pitch yaw  int16  度每秒（角速率指令，正 = 右滚 / 抬头 / 右偏航）
+    roll pitch yaw  int16  杆量，-10000..10000 = -100%..100%，正 = 右滚 / 推杆向前 / 右偏航
+                           （杆量就是杆量：多少度每秒、曲线多陡，全归游戏模组那份设置管，
+                             两边不用再对什么数字了）
     throttle        u16    0..1000
-    switches u16（arm / mode / buzzer / turtle 按位）/ buttons u16 / aux u16
+    switches u16（按位：bit0 arm 解锁 / bit1 mode 模式 / bit2 buzzer 回平 / bit3 turtle 翻正）
+    buttons  u16（按位，暂未使用）
+    aux      u16  低 2 位＝模式档位（0 角度模式 / 1 半自稳 / 2 手动模式），只有 flags 里
+                  置了 ST_MODE_SEL 才算数：遥控器的 mode 是三档拨杆时用它，两档开关时
+                  走 switches 的 bit1，两种都留着，模组那边按标志位选
     flags    u16（ST_* 位，见下）/ crc32 u32
 
   状态包 游戏 -> 辅助程序  26 字节  每 500 ms 一包（心跳 + 回执）
@@ -26,7 +32,7 @@ import struct
 import zlib
 
 MAGIC = b'EFPV'
-VER = 1
+VER = 2      # 2：三路从「角速率指令」改成「杆量」，换算口径变了，两边得一起升
 
 TYPE_STATE = 1
 TYPE_STATUS = 2
@@ -36,6 +42,7 @@ ST_VALID = 1 << 0      # 映射齐了，归一化可信
 ST_ARMED = 1 << 1      # 解锁
 ST_HOLD = 1 << 2       # 急停：游戏侧应当把相机交还
 ST_CALIB = 1 << 3      # 正在校准，别接管相机
+ST_MODE_SEL = 1 << 4   # aux 低 2 位带着模式档位，游戏端以它为准（mode 是多档开关时）
 
 # ---- 回执包 flags（游戏 -> 辅助程序）
 SG_RUNNING = 1 << 0    # 游戏侧接收端在跑
@@ -47,7 +54,7 @@ STATUS = struct.Struct('<4sBBHIHHIHI')
 STATE_SIZE = STATE.size      # 32
 STATUS_SIZE = STATUS.size    # 26
 
-RATE_MAX = 32767
+STICK_MAX = 10000     # 杆量满量程：-10000..10000 就是 -100%..100%
 THR_MAX = 1000
 
 
@@ -55,8 +62,8 @@ def _crc(payload: bytes) -> int:
     return zlib.crc32(payload) & 0xFFFFFFFF
 
 
-def clamp_rate(v) -> int:
-    return max(-RATE_MAX, min(RATE_MAX, int(round(v))))
+def clamp_stick(v) -> int:
+    return max(-STICK_MAX, min(STICK_MAX, int(round(v))))
 
 
 def clamp_throttle(v) -> int:
@@ -65,9 +72,9 @@ def clamp_throttle(v) -> int:
 
 def pack_state(seq, t_ms, roll, pitch, yaw, throttle,
                switches=0, buttons=0, aux=0, flags=0) -> bytes:
-    """三路角速率（度/秒）+ 油门（0..1000）+ 开关位。"""
+    """三路杆量（-10000..10000，即 -100%..100%）+ 油门（0..1000）+ 开关位。"""
     body = STATE.pack(MAGIC, VER, TYPE_STATE, seq & 0xFFFF, t_ms & 0xFFFFFFFF,
-                      clamp_rate(roll), clamp_rate(pitch), clamp_rate(yaw),
+                      clamp_stick(roll), clamp_stick(pitch), clamp_stick(yaw),
                       clamp_throttle(throttle), switches & 0xFFFF,
                       buttons & 0xFFFF, aux & 0xFFFF, flags & 0xFFFF, 0)
     return body[:-4] + struct.pack('<I', _crc(body[:-4]))

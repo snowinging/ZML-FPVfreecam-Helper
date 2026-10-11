@@ -108,15 +108,15 @@ class UdpLink:
         if not self.sock:
             return '没开'
         if not self.online():
-            return f'发 {self.sent}  没有回执（游戏侧没起？端口 {self.port}）'
+            return f'已发送 {self.sent} 包，未收到回执（游戏端未启动？端口 {self.port}）'
         rtt = '?' if self.rtt is None else f'{self.rtt:.1f}'
         bits = []
         if self.flags & ipc.SG_RUNNING:
-            bits.append('接收端在跑')
+            bits.append('游戏端已响应')
         if self.flags & ipc.SG_TAKEOVER:
             bits.append('相机已接管')
         if self.flags & ipc.SG_WANT_RESET:
-            bits.append('游戏要求回中')
+            bits.append('游戏端要求回中')
         tail = ('  ' + '、'.join(bits)) if bits else ''
-        return (f'发 {self.sent}  收 {self.recv}  延迟 {rtt}ms  在途 {self.lost}'
-                f'（游戏侧数出丢掉 {self.game_lost}）  游戏 {self.fps}fps{tail}')
+        return (f'已发送 {self.sent}  已接收 {self.recv}  延迟 {rtt} ms  在途 {self.lost}'
+                f'（游戏端统计丢包 {self.game_lost}）  游戏 {self.fps} fps{tail}')
