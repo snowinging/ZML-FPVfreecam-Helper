@@ -22,29 +22,29 @@ v2 协议，版本必须一致。
 ## 环境要求
 
 - Linux（读设备走 evdev / hidraw，没有 Windows 或 macOS 路径）。
-- Python 3.11 以上——配置用标准库 `tomllib` 读，写是自己实现的，没有第三方依赖。
-- tkinter：Debian/Ubuntu 装 `python3-tk`，Arch 装 `tk`，Fedora 装 `python3-tkinter`。
-- evdev（可选但推荐）：`python3-evdev` 或 `pip install evdev`。没有它就只能走 hidraw 后端。
-- 设备权限：udev 规则带 uaccess 标签的设备，当前登录用户直接就能读，不用 root。
-  普通 `/dev/input/event*` 归 `input` 组，把自己的用户加进这个组即可，也不要 sudo 跑本程序。
+- Python 3.11 暂不需要第三方依赖。
+- tkinter：Debian/Ubuntu 装 `python3-tk`，Arch 请安装 `tk`，Fedora 请装 `python3-tkinter`。
+- evdev（可选但推荐）：`python3-evdev` 或 `pip install evdev`。
+- 设备权限：udev 规则带 uaccess 标签的设备，无需root。
+  普通 `/dev/input/event*` 归 `input` 组，不要 sudo 跑本程序。
 
 ## 快速开始
 
 ```bash
-# 1. 看看遥控器在不在、有几路通道
+# 1. 检测并链接遥控器。
 python3 tools/fpv_monitor.py --list
 
-# 2. 标定：把通道号和功能名对上，写进 ~/.config/endfield-fpv/mapping.toml
+# 2. 标定：设定功能与通道，保存以写入 ~/.config/endfield-fpv/mapping.toml
 python3 tools/fpv_learn.py
 
-# 3. 检查行程：提示出现后把每根摇杆推到四个角落各停一下
+# 3. 检查行程：提示出现后把每根摇杆推至极限以校准
 python3 tools/fpv_range.py
 
-# 4. 打开界面，确认实时值在动，然后勾上发送
+# 4. 打开界面，确认实时值在动，勾选发送到游戏以开启发送端
 python3 tools/ZML_FPVfreecam-HelperGUI.py
 ```
 
-不想开游戏先验链路的话，另开一个终端跑 `python3 tools/fake_game.py --bars`，
+运行 `python3 tools/fake_game.py --bars`以使用我们构建的虚拟接收端进行验证
 它会假装成游戏端收包、回执。
 
 ## 配置
@@ -56,9 +56,9 @@ python3 tools/ZML_FPVfreecam-HelperGUI.py
 [device]
 match = "BETAFPV"        # 按设备名匹配（evdev / hidraw 通用）
 backend = "evdev"        # evdev | hidraw
-path = "/dev/input/event31"   # 直接指定节点，填了就不看 match
+path = "/dev/input/event31"   # 直接指定节点，若填写则忽略 match
 
-[hidraw]                 # 只有 hidraw 后端用到
+[hidraw]                 # 仅有 hidraw 后端会用到
 offset = 0
 width = 16
 endian = "little"
@@ -78,19 +78,12 @@ rate = 1.0
 learned = true
 ```
 
-功能名的键名一律英文（TOML、状态包、模组日志里都是这几个），界面显示中文：
 roll 横滚、pitch 俯仰、yaw 偏航、throttle 油门、arm 解锁、mode 模式、buzzer 回平、turtle 翻正。
-模式、回平、翻正这三个开关要在游戏端有对应通道才生效。
-
-模式开关的两种映射：两档就按 `kind = "switch"`，进状态包 `switches` 的 bit1；
-三档拨杆改成 `kind = "select"`，界面里点「校准」逐档停 2 秒标定，得到 `bands`（各档分界值），
-`map` 里填档位序号对应的值，也就是 角度模式 / 半自稳 / 手动模式 的先后顺序，拨反了就填 `2,1,0`。
-发出去时档位号进 `aux` 低两位并置 `ST_MODE_SEL`，模组按标志位优先取值。
+模式、回平、翻正这三个开关需要在游戏端有对应通道才会生效。
 
 ## 协议（v2）
 
-两边都只认定长二进制小包，不做文本解析，都走 `127.0.0.1`，校验用 crc32。
-UDP 丢包就地丢，下一帧补齐——遥控数据是「最新状态」，重传没有意义。
+收发端均只收发长二进制小包，不做文本解析，都通过 `127.0.0.1`，校验用 crc32。
 
 状态包，辅助程序 → 游戏，32 字节，每帧一包（默认 250 Hz）：
 
@@ -124,8 +117,6 @@ flags 位：`ST_VALID`(1) 映射齐了可信、`ST_ARMED`(2) 解锁、`ST_HOLD`(
 | fps | u16 | 游戏帧率 |
 | crc32 | u32 | 前 22 字节的 crc32 |
 
-v2 相对 v1 的改动是把三路从「角速率指令」改成「杆量」：多少度每秒、曲线多陡全部归模组那份设置管，
-两边不用再对数字。换算口径变了，所以版本号必须一起升。
 
 ## 代码结构
 
@@ -137,7 +128,7 @@ fpvhelper/link.py       UDP 收发、序号、RTT 与丢包统计
 tools/                  六个脚本，见 tools/README.md
 ```
 
-evdev 后端首选：内核已经把 HID 归一化成 `ABS_X..ABS_THROTTLE` 和 `BTN_*`，
+evdev 后端首选：内核将 HID 归一化成 `ABS_X..ABS_THROTTLE` 和 `BTN_*`，
 OpenTX / EdgeTX 的 USB 摇杆模式都属这一类，换遥控器通常只改 `[device] match`。
 hidraw 后端是自己拆原始报告，用来读 evdev 看不见的通道（超过 8 路的、藏在厂商报文里的），
 靠 `[hidraw]` 的 offset / width / endian / count 描述布局。
