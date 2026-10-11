@@ -4,18 +4,18 @@
 再确认发出去的状态包是游戏端能认的。它们共用 `fpvhelper/` 那个包，因此必须在本仓库里运行
 （脚本会自己把仓库根目录加进 `sys.path`，从哪个子目录调用都行，直接拷单个文件出去则会报找不到包）。
 
-日常只需要 `fpv_gui.py`。其余几个在标定、排障时用，顺序大体是：
+日常只需要 `ZML_FPVfreecam-HelperGUI.py`。其余几个在标定、排障时用，顺序大体是：
 
 ```
 radio_probe --list        设备到底有几个接口、HID 名字是什么
 fpv_monitor --list        程序自己能不能看到这台设备、有多少路通道
 fpv_learn                 把通道号和功能名对上，写回 TOML
 fpv_range                 摇杆推到死，确认记录的行程够宽
-fpv_gui                   日常改映射、看实时状态
+ZML_FPVfreecam-HelperGUI  日常改映射、看实时状态
 fake_game                 不开游戏，先验一遍 UDP 链路
 ```
 
-### fpv_gui.py
+### ZML_FPVfreecam-HelperGUI.py
 
 主界面。左侧通道位置条，右侧一行一个功能的映射编辑，底栏是发送开关与状态。tkinter 画的，
 系统自带，无需额外安装。`--selftest` 不打开窗口，只验证输入设备是否可用（无图形环境或远程 ssh 时用）；

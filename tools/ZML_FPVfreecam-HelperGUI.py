@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """遥控器配置工具：左侧显示通道实时值，右侧编辑映射，校准可在此完成。
 
-  ./fpv_gui.py                      使用 ~/.config/endfield-fpv/mapping.toml
-  ./fpv_gui.py --config /tmp/x.toml
-  ./fpv_gui.py --selftest           不打开窗口，仅验证输入设备是否可用（无图形环境时使用）
-  ./fpv_gui.py --send --port 47800  启动后立即向游戏发送状态包，无需手动勾选
+  ./ZML_FPVfreecam-HelperGUI.py                      使用 ~/.config/endfield-fpv/mapping.toml
+  ./ZML_FPVfreecam-HelperGUI.py --config /tmp/x.toml
+  ./ZML_FPVfreecam-HelperGUI.py --selftest           不打开窗口，仅验证输入设备是否可用（无图形环境时使用）
+  ./ZML_FPVfreecam-HelperGUI.py --send --port 47800  启动后立即向游戏发送状态包，无需手动勾选
 
 界面只做三件事：显示设备上报的通道值、把通道绑定到功能、保存为 TOML 配置。
 """
