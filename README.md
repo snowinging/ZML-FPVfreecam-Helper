@@ -1,60 +1,160 @@
-## 通道软映射（2026-10-11 定）
+# Endfield FPV Helper
 
-程序中不写死任何「第几路是油门」。设备只提供一串编号通道，各通道的功能与归一化方式
-全部记录在 `~/.config/endfield-fpv/mapping.toml` 中。更换遥控器只需修改配置，无需改动程序。
+给《明日方舟：终末地》(ZML) 的自由镜头模组配的遥控器辅助程序。跑在 Linux 桌面上，
+把一台 USB 遥控器（OpenTX / EdgeTX 之类）读进来，归一化成杆量，再用本机 UDP 以 250 Hz
+发给游戏侧的模组。模组那边只收数字，遥控器是什么样的、通道怎么排、曲线多陡，
+一概不管。
 
-分层：
-- `fpvhelper/channels.py` 输入层。后端为 evdev / hidraw / serial（CRSF，预留）。
-  evdev 为首选：内核已将 HID 归一化为 ABS_X..ABS_THROTTLE + BTN_*，OpenTX/EdgeTX 的
-  USB 摇杆模式均属此列，更换遥控器通常只需修改 `[device] match`。hidraw 为备选，
-  用于 evdev 不可见的通道（超过 8 路、隐藏开关），布局由 offset/width/endian/count 描述。
-- `fpvhelper/channels.py` 中的 `Mapping` 归一化。轴 -1..1、油门 0..1、开关 true/false、多档开关输出档位序号，
-  支持 invert / deadband / expo / trim / rate。
-- `fpvhelper/config.py` 负责 mapping.toml 的读写（读取用 tomllib，写入自行实现）。
+模组本体在 [ZML-FPVfreecam](https://github.com/snowinging/ZML-FPVfreecam)，两边用同一套
+v2 协议，版本必须一致。
 
-功能名的键名一律用英文（mapping.toml、状态包、模组日志里都是这几个键），界面与状态栏显示中文：
+## 它做什么
+
+- 从 `/dev/input/event*`（evdev）或 `/dev/hidraw*`（原始 HID）读遥控器通道。
+- 按 `mapping.toml` 把通道绑到功能：横滚 / 俯仰 / 偏航 / 油门，加解锁、模式、回平、翻正四个开关。
+- 归一化：轴 -1..1、油门 0..1、开关 true/false、多档拨杆输出档位序号；
+  带反向、死区、指数、微调、速率。
+- 打包成 32 字节小包发到 `127.0.0.1:47800`，收回游戏侧 26 字节回执，算出 RTT 和游戏侧帧率。
+- 附一个 tkinter 界面：左边看实时通道值，右边改映射，标定也在里面完成。
+
+程序里不写死任何「第几路是油门」。通道到功能的对应全在配置文件里，换遥控器只改配置。
+
+## 环境要求
+
+- Linux（读设备走 evdev / hidraw，没有 Windows 或 macOS 路径）。
+- Python 3.11 以上——配置用标准库 `tomllib` 读，写是自己实现的，没有第三方依赖。
+- tkinter：Debian/Ubuntu 装 `python3-tk`，Arch 装 `tk`，Fedora 装 `python3-tkinter`。
+- evdev（可选但推荐）：`python3-evdev` 或 `pip install evdev`。没有它就只能走 hidraw 后端。
+- 设备权限：udev 规则带 uaccess 标签的设备，当前登录用户直接就能读，不用 root。
+  普通 `/dev/input/event*` 归 `input` 组，把自己的用户加进这个组即可，也不要 sudo 跑本程序。
+
+## 快速开始
+
+```bash
+# 1. 看看遥控器在不在、有几路通道
+python3 tools/fpv_monitor.py --list
+
+# 2. 标定：把通道号和功能名对上，写进 ~/.config/endfield-fpv/mapping.toml
+python3 tools/fpv_learn.py
+
+# 3. 检查行程：提示出现后把每根摇杆推到四个角落各停一下
+python3 tools/fpv_range.py
+
+# 4. 打开界面，确认实时值在动，然后勾上发送
+python3 tools/ZML_FPVfreecam-HelperGUI.py
+```
+
+不想开游戏先验链路的话，另开一个终端跑 `python3 tools/fake_game.py --bars`，
+它会假装成游戏端收包、回执。
+
+## 配置
+
+配置文件 `~/.config/endfield-fpv/mapping.toml`，缺失时按设备现有通道生成一份占位内容。
+每次保存前会把旧文件复制成 `mapping.toml.bak`。
+
+```toml
+[device]
+match = "BETAFPV"        # 按设备名匹配（evdev / hidraw 通用）
+backend = "evdev"        # evdev | hidraw
+path = "/dev/input/event31"   # 直接指定节点，填了就不看 match
+
+[hidraw]                 # 只有 hidraw 后端用到
+offset = 0
+width = 16
+endian = "little"
+count = 8
+
+[funcs.roll]
+channel = 0              # 通道号：设备里的第几路，未必等于摇杆的物理位置
+kind = "axis"            # axis 轴 / range 行程（油门）/ switch 开关 / select 多档（拨杆）
+min = 0
+max = 2047
+center = 1023
+invert = false
+deadband = 0.01
+expo = 0.0
+trim = 0.0
+rate = 1.0
+learned = true
+```
+
+功能名的键名一律英文（TOML、状态包、模组日志里都是这几个），界面显示中文：
 roll 横滚、pitch 俯仰、yaw 偏航、throttle 油门、arm 解锁、mode 模式、buzzer 回平、turtle 翻正。
-其中模式、回平、翻正三个开关需要在游戏端有对应通道才会生效（见模组侧开关位说明）。
+模式、回平、翻正这三个开关要在游戏端有对应通道才生效。
 
-模式开关是两档时就按「开关」类型映射（进 `switches` 的 bit1）；是三档拨杆时把该行类型改成
-「select 多档」，点「校准」逐档标定（每档停 2 秒），得到 `bands`（各档分界值）。档位序号按原始值
-从小到大排，「档位顺序」那栏填档位序号对应的值，模式开关就是 0 角度模式 / 1 半自稳 / 2 手动模式，
-拨动着反了就填 2,1,0。发状态包时档位号进 `aux` 低两位并置 `flags` 的 `ST_MODE_SEL`，
-游戏端优先按档位选模式；没映射多档的还走 bit1 与设置里的 `fpv_mode`。
+模式开关的两种映射：两档就按 `kind = "switch"`，进状态包 `switches` 的 bit1；
+三档拨杆改成 `kind = "select"`，界面里点「校准」逐档停 2 秒标定，得到 `bands`（各档分界值），
+`map` 里填档位序号对应的值，也就是 角度模式 / 半自稳 / 手动模式 的先后顺序，拨反了就填 `2,1,0`。
+发出去时档位号进 `aux` 低两位并置 `ST_MODE_SEL`，模组按标志位优先取值。
 
-工具：
-- `tools/fpv_monitor.py --list / --seconds N / --dump` 查看设备通道数量与各通道的实时值。
-- `tools/fpv_learn.py` 标定模式：先初查（将所有摇杆动作一遍，观察哪些通道有变化），
-  再逐个功能标定（「推到正方向到底 → 回车」、「推到反方向到底 → 回车」），
-  自动得出通道号、min/max/中位、正反向，并写回 TOML。开关询问两个位置，多档开关询问多个位置。
+## 协议（v2）
 
-2026-10-11 这台 OpenTX BETAFPV LR3PRO（VID:PID 1209:4f54）在 evdev 下为 7 路
-（ABS_X/Y/Z/RX/RY/RZ/THROTTLE，均为 0..2047）+ 24 个按键；/dev/input/event31 与 js0
-带有 logind 的 uaccess ACL，普通用户即可读取，hidraw14 同理。因此无需 root，也无需 udev 规则。
-通道与物理杆位的对应关系**不作假设**，需先运行一次标定模式后固定。
+两边都只认定长二进制小包，不做文本解析，都走 `127.0.0.1`，校验用 crc32。
+UDP 丢包就地丢，下一帧补齐——遥控数据是「最新状态」，重传没有意义。
 
-## 配置工具（GUI）
+状态包，辅助程序 → 游戏，32 字节，每帧一包（默认 250 Hz）：
 
-`tools/ZML_FPVfreecam-HelperGUI.py` 使用 tkinter（系统自带，无需额外安装）。
-左侧：各通道的位置条（底色带 = 本次观察到的活动范围，竖线 = 打开界面时的静止位），
-下方为两个摇杆框，横纵各取映射中的一路，框的四条边标注该路的正负方向：
-右边/上边为正、左边/下边为负，勾选「反向」后自动对调，因此框内显示的方向即程序最终输出的方向。
-右侧：每行一个功能，包含通道下拉框 / 类型 / 反向 / 指数 / 死区 / 最小- / 中位 / 最大+ 等可编辑项。
-最小一栏为冷色、最大一栏为暖色，行尾还有一个实时符号：杆偏向正方向显示 +，
-偏向反方向显示 -，回到中位附近则为空。行左侧的小色条：亮 = 当前选中，暗 = 尚未标定。
-更换设备后若映射的行程与当前设备不符（例如接入 DJI C5 而配置仍为 BETAFPV 的 0..2047），
-连接时底栏会直接提示需要重新标定的通道。
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| magic | 4B | `EFPV` |
+| ver / type | u8 / u8 | 2 / 1 |
+| seq | u16 | 序号，回执里带回来 |
+| t_ms | u32 | 单调时钟毫秒，回执原样抄回，用来算 RTT |
+| roll / pitch / yaw | int16 ×3 | 杆量 -10000..10000，即 -100%..100%，正为右滚 / 推杆向前 / 右偏航 |
+| throttle | u16 | 0..1000 |
+| switches | u16 | bit0 解锁、bit1 模式、bit2 回平、bit3 翻正 |
+| buttons | u16 | 按位，暂未使用 |
+| aux | u16 | 低 2 位＝模式档位（0 角度 / 1 半自稳 / 2 手动），需 `ST_MODE_SEL` 才算数 |
+| flags | u16 | 见下 |
+| crc32 | u32 | 前 28 字节的 crc32 |
 
-标定有三种做法，均需点击保存后才会写入文件：
-- 手动：直接修改最小/中位/最大。select 类型在中位栏填写分界值，以逗号分隔。
-- 设为中位：将摇杆置于中位后点击，当前值即作为中位。
-- 校准（每行或底栏）：通道未绑定时使用。推到一端停住、再推到另一端停住，通道号、
-  行程、正反向一并算出。
-- 自动标定行程 / 全部轴自动标定分两段。
-  第一段为零位检测：开始后程序监视参与的各路轴，期间请勿触碰摇杆，连续 3 秒无变化，
-  即将当前位置记为中位（中途有动作会重新计时）。油门等不回中的轴不参与中位记录。
-  第二段为行程标定：6 秒（单路）或 9 秒（全部轴）内将摇杆推到两端，可多画几个整圈，
-  该段采集到的 min/max 直接写入映射。开关不参与此流程，开关请使用「校准」逐档标定。
+flags 位：`ST_VALID`(1) 映射齐了可信、`ST_ARMED`(2) 解锁、`ST_HOLD`(4) 急停交还相机、
+`ST_CALIB`(8) 校准中别接管、`ST_MODE_SEL`(16) aux 里带档位。
 
-底栏另有回中检测：仅检查带弹簧回中的轴，偏离超过量程 6% 时报告具体通道。
-`--selftest` 不打开窗口，仅验证输入设备是否可用。
+回执包，游戏 → 辅助程序，26 字节，每 500 ms 一包：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| magic / ver / type | 4B / u8 / u8 | `EFPV` / 2 / 2 |
+| ack_seq | u16 | 最后一个收到的状态包序号 |
+| echo_t | u32 | 抄回该包的 t_ms |
+| flags | u16 | `SG_RUNNING`(1) 接收端在跑、`SG_TAKEOVER`(2) 相机已被接管、`SG_WANT_RESET`(4) 要求回中 |
+| lost | u16 | 游戏侧数出来的缺号 |
+| game_ms | u32 | 游戏侧时钟 |
+| fps | u16 | 游戏帧率 |
+| crc32 | u32 | 前 22 字节的 crc32 |
+
+v2 相对 v1 的改动是把三路从「角速率指令」改成「杆量」：多少度每秒、曲线多陡全部归模组那份设置管，
+两边不用再对数字。换算口径变了，所以版本号必须一起升。
+
+## 代码结构
+
+```
+fpvhelper/channels.py   输入层与归一化：evdev / hidraw / serial(CRSF，预留) 后端 + Mapping
+fpvhelper/config.py     mapping.toml 读写（读用 tomllib，写自己来）
+fpvhelper/ipc.py        协议打包与解包
+fpvhelper/link.py       UDP 收发、序号、RTT 与丢包统计
+tools/                  六个脚本，见 tools/README.md
+```
+
+evdev 后端首选：内核已经把 HID 归一化成 `ABS_X..ABS_THROTTLE` 和 `BTN_*`，
+OpenTX / EdgeTX 的 USB 摇杆模式都属这一类，换遥控器通常只改 `[device] match`。
+hidraw 后端是自己拆原始报告，用来读 evdev 看不见的通道（超过 8 路的、藏在厂商报文里的），
+靠 `[hidraw]` 的 offset / width / endian / count 描述布局。
+
+## 排障
+
+- `fpv_monitor.py --list` 里没有设备：先看 `ls /dev/input/event*`，再把用户加进 `input` 组；
+  hidraw 设备确认 `/sys/class/hidraw/hidrawN/device/uevent` 里的 HID_NAME 与 `match` 对得上。
+- 通道数值在动但游戏里没反应：跑 `fake_game.py --bars` 看包有没有发出去、字段对不对，
+  再看模组侧那项设置里的端口与启用开关。
+- 游戏里杆量到头了但摇杆还没到极限：行程记得过窄，重跑一次 `fpv_learn.py` 或 `fpv_range.py`，
+  标定时一定要把杆推到底。
+- 底栏提示需要重新标定：映射里的行程与当前设备不符（比如换了另一台遥控器），重标一次。
+- 界面底栏的回中检测只检查带弹簧回中的轴，偏离超过量程 6% 会报出具体通道，那是硬件漂移不是程序问题。
+- 无图形环境（ssh 里）用 `--selftest`，它只验证输入设备可用，不开窗。
+
+## 相关
+
+- 模组：[ZML-FPVfreecam](https://github.com/snowinging/ZML-FPVfreecam)（自由镜头 + 接管，C++/Lua）
+- 工具脚本说明：[tools/README.md](tools/README.md)
