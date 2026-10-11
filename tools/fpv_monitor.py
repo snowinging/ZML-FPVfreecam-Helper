@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""看一眼遥控器现在报什么。不做任何假设：设备有几路就显示几路。
+"""查看遥控器当前上报的通道值。不作任何假设：设备有多少路就显示多少路。
 
-  ./fpv_monitor.py --list              列出能找到的设备
+  ./fpv_monitor.py --list              列出可识别的设备
   ./fpv_monitor.py --seconds 5         实时柱状图，默认 10 秒
-  ./fpv_monitor.py --dump              只打一次通道清单和原始值
+  ./fpv_monitor.py --dump              仅输出一次通道清单和原始值
 """
 from __future__ import annotations
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""假游戏端：站在游戏的位置收状态包、回回执，用来验证协议和延迟，不用开游戏。
+"""模拟游戏端：从游戏端一侧接收状态包并回复回执，用于验证协议与延迟，无需启动游戏。
 
 用法：
-  ./tools/fake_game.py                    # 收到什么打什么，每 0.5 秒一行
-  ./tools/fake_game.py --bars             # 顺便画四条摇杆位置的条
+  ./tools/fake_game.py                    # 收到什么就输出什么，每 0.5 秒一行
+  ./tools/fake_game.py --bars             # 同时以条形图显示四路摇杆位置
   ./tools/fake_game.py --seconds 10       # 跑 10 秒自己退出
-  ./tools/fake_game.py --quiet            # 只统计，不打明细
-  ./tools/fake_game.py --takeover         # 回执里报"相机已接管"
+  ./tools/fake_game.py --quiet            # 仅统计，不输出明细
+  ./tools/fake_game.py --takeover         # 回执中报告"相机已接管"
 """
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ def bars(state):
         if name == 'throttle':
             cells = int(v / ipc.THR_MAX * 21)
         else:
-            cells = int((v + 500) / 1000 * 21)
+            cells = int((v + ipc.STICK_MAX) / (2 * ipc.STICK_MAX) * 21)
         cells = max(0, min(21, cells))
         out.append(f'{name:>8} [{("#" * cells).ljust(21)}] {v:>6}')
     return out
@@ -50,7 +50,7 @@ def main():
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((args.host, args.port))
     sock.settimeout(0.05)
-    print(f'假游戏端起来：{args.host}:{args.port}  ' + ipc.describe(), flush=True)
+    print(f'模拟游戏端已启动：{args.host}:{args.port}  ' + ipc.describe(), flush=True)
 
     t0 = time.monotonic()
     n = bad = lost = 0

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""遥控器 HID 探针：找设备、抓原始报告、统计每个字节/每个候选通道的活动范围。
+"""遥控器 HID 探针：识别设备、采集原始报告、统计各字节与候选通道的活动范围。
 
 用法:
   ./radio_probe.py --list                     列出候选 HID 设备
-  ./radio_probe.py --seconds 120 --csv a.csv  抓 120 秒并存原始报告
-  ./radio_probe.py --bar                      实时打印 8 个通道的柱状图（校准时用）
-不用 root：设备被 udev 打了 uaccess 标签，当前登录用户有 ACL。
+  ./radio_probe.py --seconds 120 --csv a.csv  采集 120 秒并保存原始报告
+  ./radio_probe.py --bar                      实时打印 8 个通道的柱状图（标定时使用）
+无需 root：设备的 udev 规则带有 uaccess 标签，当前登录用户已具备 ACL 权限。
 """
 import argparse, os, select, sys, time, glob
 
@@ -87,12 +87,12 @@ def capture(node, seconds, csv_path=None):
     dur = time.time() - t0
     print(f'\n# 共 {count} 包 / {dur:.1f} 秒 = {count / dur:.1f} Hz')
     print(f'# 报告长度分布: {lengths}')
-    print('\n# 每字节活动范围（只列有变化的）')
+    print('\n# 各字节活动范围（仅列出有变化的）')
     for i in sorted(per_byte):
         lo, hi, n = per_byte[i]
         if hi > lo:
             print(f'  b{i:<3} {lo:>3}-{hi:>3}')
-    print('\n# 候选通道：16 位小端，从偏移 1 起，每 2 字节一路')
+    print('\n# 候选通道：16 位小端，自偏移 1 起，每 2 字节为一路')
     for idx, off in enumerate(range(1, 17, 2)):
         vals = []
         if csv_path:
@@ -106,9 +106,9 @@ def capture(node, seconds, csv_path=None):
             continue
         u = [a | (b << 8) for a, b in vals]
         s = [v - 65536 if v >= 32768 else v for v in u]
-        print(f'  ch{idx} (偏移 {off}-{off + 1}): 无符号 {min(u)}..{max(u)}  有符号 {min(s)}..{max(s)}  '
-              f'{sum(1 for v in u if v != u[0]) / len(u) * 100:.0f}% 样本在动')
-    print('\n# 提示：16 位通道只有 4 路在动 = 那两路其实是别的位宽；')
+        print(f'  ch{idx}（偏移 {off}-{off + 1}）：无符号 {min(u)}..{max(u)}  有符号 {min(s)}..{max(s)}  '
+              f'{sum(1 for v in u if v != u[0]) / len(u) * 100:.0f}% 样本有变化')
+    print('\n# 提示：16 位通道中仅 4 路有变化，说明其余两路为其他位宽；')
 
 
 def bar(node, seconds):
@@ -151,7 +151,7 @@ def main():
     if not node:
         hits = [h for h in find_hidraw() if h[0] > 0]
         if not hits:
-            print('没找到遥控器，用 --list 看看', file=sys.stderr)
+            print('未找到遥控器，可用 --list 查看', file=sys.stderr)
             return 1
         node = hits[0][1]
         print(f'# 选中 {node}（{hits[0][2]}）')
