@@ -728,8 +728,8 @@ class App:
         if not armed and not missing:
             why.append('arm 开关没推上来（没标过就勾「免 arm 开关」）')
         if link is not None and not (link.flags & ipc.SG_RUNNING and link.online()):
-            why.append('游戏侧没回话：模组得是 0.1.18 那份、FreeCam.dll 要一起换、端口两边一样、'
-                       '自由镜头要按 Ctrl+F6 先开')
+            why.append('游戏没回话：模组要 0.1.19、FreeCam.dll 一起换、端口一致、先 Ctrl+F6；'
+                       '游戏里 Ctrl+F9 写自检日志')
         elif link is not None and not (link.flags & ipc.SG_TAKEOVER and link.online()):
             why.append('接收端在跑但没接管相机：先按 Ctrl+F6 开自由镜头，再看上面那几项')
         if self.selftest_var.get():
