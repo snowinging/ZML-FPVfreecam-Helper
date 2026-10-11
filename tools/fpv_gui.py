@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import os
 import sys
 import time
@@ -164,8 +165,10 @@ class App:
         root.rowconfigure(1, weight=1)
 
         # 顶栏
-        top = tk.Frame(root, bg=BG)
-        top.grid(row=0, column=0, columnspan=3, sticky='ew', padx=14, pady=(12, 6))
+        holder = tk.Frame(root, bg=BG)
+        holder.grid(row=0, column=0, columnspan=3, sticky='ew', padx=14, pady=(12, 6))
+        top = tk.Frame(holder, bg=BG)
+        top.grid(row=0, column=0, sticky='ew')
         tk.Label(top, text='设备', bg=BG, fg=DIM, font=MONO).pack(side='left')
         self.dev_var = tk.StringVar()
         self.dev_box = ttk.Combobox(top, textvariable=self.dev_var, width=42, state='readonly')
@@ -182,6 +185,10 @@ class App:
                               insertbackground=FG, relief='flat', font=MONO)
         port_entry.pack(side='left')
         port_entry.bind('<Return>', lambda e: self._toggle_send(restart=True))
+        self.arm_bypass = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top, text='免 arm 开关', variable=self.arm_bypass).pack(side='left', padx=(12, 0))
+        self.selftest_var = tk.BooleanVar(value=False)
+        ttk.Checkbutton(top, text='自检信号', variable=self.selftest_var).pack(side='left', padx=(10, 0))
         self.link_label = tk.Label(top, text='', bg=BG, fg=DIM, font=('DejaVu Sans Mono', 8))
         self.link_label.pack(side='right', padx=(0, 14))
         self.hz_label = tk.Label(top, text='--', bg=BG, fg=DIM, font=MONO)
@@ -233,6 +240,17 @@ class App:
 
         # 底栏
         bottom = tk.Frame(root, bg=BG)
+        # 就绪检查：一行说清"现在卡在哪"，游戏会不会接管、为什么不接管
+        ready = tk.Frame(holder, bg=BG)
+        ready.grid(row=1, column=0, sticky='ew', pady=(8, 0))
+        self.lamp = {}
+        for key in ('设备', '映射', '解锁', '发送', '游戏', '接管'):
+            w = tk.Label(ready, text=key + ' --', bg=BG, fg=DIM, font=('DejaVu Sans Mono', 8))
+            w.pack(side='left', padx=(0, 12))
+            self.lamp[key] = w
+        self.lamp_why = tk.Label(ready, text='', bg=BG, fg=LOW, font=('DejaVu Sans Mono', 8))
+        self.lamp_why.pack(side='left')
+
         bottom.grid(row=2, column=0, columnspan=3, sticky='ew', padx=14, pady=(6, 12))
         ttk.Button(bottom, text='保存', width=7, command=self.save).pack(side='left')
         ttk.Button(bottom, text='重载', width=7, command=self.reload).pack(side='left', padx=6)
@@ -457,8 +475,16 @@ class App:
             flags |= ipc.ST_VALID
         if self.learn:
             flags |= ipc.ST_CALIB
-        if values.get('arm'):
+        if values.get('arm') or self.arm_bypass.get():
             flags |= ipc.ST_ARMED
+        if self.selftest_var.get():
+            # 自检信号：不看遥控器，直接让相机慢慢摇。
+            # 游戏里相机跟着动，就说明从这一头到自由镜头整条路都通了。
+            t = time.monotonic()
+            values = {'roll': .3 * math.sin(t * .9), 'pitch': .22 * math.sin(t * .55 + 1.0),
+                      'yaw': 0.0, 'throttle': 0.0, 'arm': True,
+                      'mode': False, 'buzzer': False, 'turtle': False}
+            flags |= ipc.ST_VALID | ipc.ST_ARMED
         sw = 0
         for bit, name in enumerate(('arm', 'mode', 'buzzer', 'turtle')):
             if values.get(name):
@@ -468,6 +494,7 @@ class App:
                              rate['yaw'] * (values.get('yaw') or 0.0),
                              ipc.THR_MAX * (values.get('throttle') or 0.0),
                              switches=sw, flags=flags)
+        self.sent = getattr(self, 'sent', 0) + 1
         self.link.poll()
 
     # ---------------------------------------------------------------- 每帧
@@ -542,13 +569,16 @@ class App:
 
         now = time.monotonic()
         if now - self.hz_t0 >= 1.0:
-            self.hz = self.frames / (now - self.hz_t0)
-            self.frames, self.hz_t0 = 0, now
+            span = now - self.hz_t0
+            self.hz = self.frames / span
+            self.send_hz = getattr(self, 'sent', 0) / span      # 真正发出去的包率
+            self.frames, self.sent, self.hz_t0 = 0, 0, now
             # 摇杆不动时内核会把没变化的轴过滤掉，一帧都不来，这是正常的
             self.hz_label.config(text='静止' if self.hz < 0.5 else f'包率 {self.hz:.0f} Hz')
             if self.link:
                 self.link_label.config(text=self.link.summary(),
                                        fg=FG if self.link.online() else DIM)
+            self._ready_tick()
 
         if self.learn:
             self._learn_tick()
@@ -659,6 +689,52 @@ class App:
         for name in LEARNABLE:
             self._refresh_range(name)
         self.set_status('已从磁盘重载')
+
+    def _ready_tick(self):
+        """一行说清"现在到哪一步了"，以及游戏为什么不接管。"""
+        funcs = self.mapping.funcs
+        stick = ('roll', 'pitch', 'yaw', 'throttle')
+        missing = [n for n in stick if not (funcs.get(n) or {}).get('learned')]
+        values = getattr(self, 'last_values', None) or {}
+        armed = bool(values.get('arm')) or self.arm_bypass.get() or self.selftest_var.get()
+        link = self.link
+
+        def put(key, text, level):
+            self.lamp[key].config(text=text, fg={'ok': ACCENT, 'warn': LOW,
+                                                 'dim': DIM, 'mid': FG}[level])
+
+        put('设备', '设备 ' + ('已连' if self.src else '没连'), 'ok' if self.src else 'warn')
+        put('映射', '映射 齐' if not missing else '映射 缺' + '/'.join(missing),
+            'ok' if not missing else 'warn')
+        put('解锁', '解锁 ' + ('开' if armed else '关'), 'ok' if armed else 'warn')
+        sending = link is not None and self.link is link
+        hz = getattr(self, 'send_hz', 0.0) if sending else 0.0
+        put('发送', f'发送 {hz:.0f}Hz' if sending else '发送 关',
+            'ok' if hz > 5 else ('warn' if sending else 'dim'))
+        if link is None:
+            put('游戏', '游戏 没发', 'warn')
+            put('接管', '接管 --', 'dim')
+        else:
+            running = bool(link.flags & ipc.SG_RUNNING) and link.online()
+            taken = bool(link.flags & ipc.SG_TAKEOVER) and link.online()
+            put('游戏', '游戏 ' + ('在跑' if running else '没回话'), 'ok' if running else 'warn')
+            put('接管', '接管 ' + ('中' if taken else '没接管'), 'ok' if taken else 'mid')
+
+        why = []
+        if not self.src:
+            why.append('先把遥控器连上')
+        if missing:
+            why.append('映射没标全，游戏一定不会接管：用右边的「校准」逐路认一遍')
+        if not armed and not missing:
+            why.append('arm 开关没推上来（没标过就勾「免 arm 开关」）')
+        if link is not None and not (link.flags & ipc.SG_RUNNING and link.online()):
+            why.append('游戏侧没回话：模组得是 0.1.18 那份、FreeCam.dll 要一起换、端口两边一样、'
+                       '自由镜头要按 Ctrl+F6 先开')
+        elif link is not None and not (link.flags & ipc.SG_TAKEOVER and link.online()):
+            why.append('接收端在跑但没接管相机：先按 Ctrl+F6 开自由镜头，再看上面那几项')
+        if self.selftest_var.get():
+            why.append('自检信号开着，遥控器不参与')
+        self.lamp_why.config(text='；'.join(why))
 
     def set_status(self, text):
         self.status.config(text=text)
@@ -836,10 +912,14 @@ class App:
         self.learn = None
 
 
-    def apply_cli(self, port=None):
+    def apply_cli(self, port=None, wiggle=False, arm_bypass=False):
         """命令行起动时直接把「发给游戏」打开——不用在别人桌面上点勾选框。"""
         if port:
             self.port_var.set(str(port))
+        if arm_bypass:
+            self.arm_bypass.set(True)
+        if wiggle:
+            self.selftest_var.set(True)
         self.send_var.set(True)
         self._toggle_send()
 
@@ -862,13 +942,15 @@ def main():
     ap.add_argument('--selftest', action='store_true')
     ap.add_argument('--send', action='store_true', help='起动就把状态包发给游戏（游戏侧 bind 这个端口）')
     ap.add_argument('--port', type=int, default=None, help='配合 --send，默认用配置里的端口')
+    ap.add_argument('--wiggle', action='store_true', help='发自检信号：不看遥控器，让相机自己慢慢摇')
+    ap.add_argument('--arm-bypass', action='store_true', help='没标过 arm 开关也算已解锁')
     args = ap.parse_args()
     if args.selftest:
         return selftest(args.config)
     root = tk.Tk()
     app = App(root, args.config)
-    if args.send or args.port:
-        app.apply_cli(args.port)
+    if args.send or args.port or args.wiggle:
+        app.apply_cli(args.port, wiggle=args.wiggle, arm_bypass=args.arm_bypass)
     root.mainloop()
     return 0
 
