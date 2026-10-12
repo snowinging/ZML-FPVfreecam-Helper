@@ -22,6 +22,7 @@ v2 协议，版本必须一致。
 ## 环境要求
 
 - Linux（读设备走 evdev / hidraw，没有 Windows 或 macOS 路径）。
+- Windows:详见Endfield-FpvHelper-windows.zip
 - Python 3.11 暂不需要第三方依赖。
 - tkinter：Debian/Ubuntu 装 `python3-tk`，Arch 请安装 `tk`，Fedora 请装 `python3-tkinter`。
 - evdev（可选但推荐）：`python3-evdev` 或 `pip install evdev`。
